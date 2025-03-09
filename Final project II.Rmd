@@ -1,0 +1,531 @@
+---
+title: "Exploratory Data Analysis and Data Cleaning for Housing Sales Dataset"
+author: "Gerard Corrales"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(dplyr)
+library(tidyverse) 
+library(tidymodels)
+library(mosaic) 
+library(cluster)  
+library(factoextra)
+library(lubridate)
+```
+
+# 1. Data Importing and Pre-processing
+
+##   1.1.1 Importing 'house_sales.csv' data set to our project using read_csv() function.The file type .csv is a popular tabular data type. 
+
+```{r}
+
+housing_sales<- read.csv("house_sales.csv")
+
+```
+
+
+
+###   1.1.2 Checking the dimensions of the dataset
+
+```{r}
+
+dimensions <- dim(housing_sales)
+
+print(paste("Total Number of Rows:", dimensions[1],
+            ", Total Number of Columns:", dimensions[2]))
+
+
+```
+
+The dataset contains a total of 21,613 rows and 21 columns.
+
+### 1.1.3 Checking data types in the data set
+
+```{r}
+
+str(housing_sales)
+
+```
+
+Data types found in the data frame:
+
+**id:** Numeric
+
+**date:** Character
+
+**price, bedrooms, bathrooms, sqft_living, sqft_lot, floors, lat, long:** Numeric (these are continuous variables)
+
+**waterfront, view, condition, grade, yr_built, yr_renovated, zipcode, sqft_living15, sqft_lot15:** Integer (ordinal variables)
+
+**sqft_above, sqft_basement:** Integer (whole numbers)
+
+All columns appear to be correct except for the 'date' column, which appears to be of character type. We will proceed to change the 'date' column to an appropriate Date type.
+
+
+Fixing the date column using lubridate library:
+
+```{r}
+
+housing_sales[2] <- housing_sales[2] %>%
+  mutate(date = as.character(date)) %>%
+  mutate(date = str_remove(date, "T000000")) %>%
+  mutate(date = ymd(date))
+
+str(housing_sales)
+
+```
+
+Date column has been appropiately changed the type to Date format
+
+## 1.2 Clean, wrangle, and handling missing data
+
+### 1.2.1 Checking which columns contains missing data
+
+```{r}
+
+missing_data_house_sales <- colSums(is.na(housing_sales))
+missing_data_house_sales
+
+```
+
+```{r, echo=FALSE}
+
+cat("Columns with missing data:\n",
+    paste("bedrooms: ", missing_data_house_sales[["bedrooms"]], "\n"),
+    paste("bathrooms: ", missing_data_house_sales[["bathrooms"]], "\n"),
+    paste("sqft_living: ", missing_data_house_sales[["sqft_living"]], "\n"),
+    paste("sqft_lot: ", missing_data_house_sales[["sqft_lot"]], "\n"))
+
+
+```
+
+We decided to eliminate rows with missing values in the "price" column. 
+
+```{r}
+
+housing_clean<- housing_sales %>% 
+  filter(price != is.na(price))
+```
+
+By removing all rows containing missing values, we ended up losing 3,995 rows, which accounts for approximately 18.5% of the total dataset.
+
+
+## 1.3 Transforming Data
+
+* **Normalization/Rescale:** We divided some variables by a constant value, for example:
+
+
+  * **“Price”:** was divided by 10,000 to create a new variable **"price_10000"**
+
+
+  * **"sqft_living", "sqft_lot", "sqft_above", and "sqft_basement":** were divided by 100 to create variables like **“sqft_living100”, “sqft_lot100”, “sqft_above100”, and “sqft_basement100”**
+
+* **Feature Construction:**  We created a new variable called **“renovated”** that checked if **“yr_renovated”** was true or not. And with this information we could know whether a house has been renovated or not.
+
+* **Aggregation:** We used the aggregation function ”case_when” for two variables:
+
+  * **Bedrooms:** Were grouped into categories depending on their square footage. If the square footage is less than 1000, it's categorized as 1 bedroom, and so on, up to 7 bedrooms for square footage greater than 3000. 
+
+  * **Bathrooms:** Were grouped into categories ranging from 1 to 5 depending on their square footage. 
+
+```{r}
+
+housing_clean[15871,4]<- 3
+
+housing_clean <- housing_clean %>%
+  mutate(price_10000 = price / 10000,
+         sqft_living = ifelse(is.na(sqft_living), sqft_living15, sqft_living), 
+         sqft_living100 = sqft_living / 100,
+         sqft_lot = ifelse(is.na(sqft_lot), sqft_lot15, sqft_lot), 
+         sqft_lot100 = sqft_lot / 100,
+         sqft_above100 = sqft_above / 100,
+         sqft_basement100 = sqft_basement / 100,
+         bedrooms = case_when(
+           is.na(bedrooms) & sqft_living < 1000 ~ 1,
+           is.na(bedrooms) & sqft_living < 1500 ~ 2,
+           is.na(bedrooms) & sqft_living < 2000 ~ 3,
+           is.na(bedrooms) & sqft_living < 2600 ~ 4,
+           is.na(bedrooms) & sqft_living < 2900 ~ 5,
+           is.na(bedrooms) & sqft_living <= 3000 ~ 6,
+           is.na(bedrooms) & sqft_living > 3000 ~ 7,
+           .default = bedrooms
+         ), 
+         bathrooms = case_when(
+           is.na(bathrooms) & sqft_living < 1000 ~ 1,
+           is.na(bathrooms) & sqft_living < 1500 ~ 2,
+           is.na(bathrooms) & sqft_living < 3000 ~ 3,
+           is.na(bathrooms) & sqft_living < 4000 ~ 4,
+           is.na(bathrooms) & sqft_living >= 4000 ~ 5,
+           .default = bathrooms
+         ), 
+         zipcode=as.factor(zipcode),  
+         condition_f = as.factor(condition),
+         waterfront_f = as.factor(waterfront),
+         view_f = as.factor(view),
+         grade_f = as.factor(grade),
+         renovated = ifelse(yr_renovated != 0, 1, 0),
+         renovated = as.factor(renovated)) %>%
+  filter(bedrooms != 0) 
+
+colSums(is.na(housing_clean))
+
+```
+
+## 1.4 Reducing Redundant Data and Performing Discretization
+
+* **Discretization:** We converted the continuous data in **bedrooms** and **bathrooms** to discrete intervals. 
+
+  * **bedrooms:**
+  
+```{r}
+
+housing_clean<- housing_clean %>%
+  filter(id != 6306400140 & id != 1453602309 & id != 6896300380 & id != 2954400190 &
+           id != 2569500210 & id != 2310060040 & id != 3374500520 & id != 7849202190 & 
+           id != 7849202299 & id != 9543000205 & id != 1222029077)
+
+housing_clean<- housing_clean %>%
+  mutate(bed_fact = as.factor(bedrooms),
+         bath_char = as.character(bathrooms),
+         bath_fact = fct_collapse(bath_char,
+    "0 to 1" = c("0", "0.5", "0.75", "1"), 
+    "1.25 to 2" = c("1.25", "1.5", "1.75", "2"), 
+    "2.25-3" = c("2.25", "2.5", "2.75", "3") ,
+    "3.25-4" = c("3.25", "3.5", "3.75", "4"),
+    "4.25-5" = c("4.25", "4.5", "4.75", "5"),
+    "5.25 and up" = c("5.25", "5.5", "5.75", "6", "6.25", "6.5", "6.75",
+                      "7.5", "7.75", "8")
+  )) 
+
+
+housing_clean<- housing_clean %>%
+  mutate(bedrooms = case_when(
+    is.na(bedrooms) & sqft_living < 1000 ~ 1,
+    is.na(bedrooms) & sqft_living < 1500 ~ 2,
+    is.na(bedrooms) & sqft_living < 2000 ~ 3,
+    is.na(bedrooms) & sqft_living < 2600 ~ 4,
+    is.na(bedrooms) & sqft_living < 2900 ~ 5,
+    is.na(bedrooms) & sqft_living <= 3000 ~ 6,
+    is.na(bedrooms) & sqft_living > 3000 ~ 7,
+    .default = bedrooms
+  ))
+
+
+
+```
+  
+  * **Bathrooms:**
+  
+```{r}
+housing_clean<- housing_clean %>%
+  mutate(bathrooms = case_when(
+    is.na(bathrooms) & sqft_living < 1000 ~ 1,
+    is.na(bathrooms) & sqft_living < 1500 ~ 2,
+    is.na(bathrooms) & sqft_living < 3000 ~ 3,
+    is.na(bathrooms) & sqft_living < 4000 ~ 4,
+    is.na(bathrooms) & sqft_living > 4000 ~ 5,
+    .default = bathrooms
+  ))
+
+```
+
+
+# 2. Data Analysis and Visualization
+
+## 2.1 Identify categorical, ordinal, and numerical variables within data
+
+* Categorical Variables:
+
+
+  * **“zipcode”:** Consist of discrete categories corresponding to different geographic locations.
+  
+* Ordinal Variables:
+
+  * **“waterfront”, “view”, “condition”, “grade”:** They all have ordered categories indicating if exists waterfront or not, how good is the view, the overall condition of the property, and the quality of the construction.
+
+* Numerical Variables:
+
+  * **“price”, “sqft_living”, “sqft_lot”, “bedrooms”, “bathrooms”:** All these variables are continuous or discrete values. 
+
+## 2.2 Measures of centrality and distribution with visualizations
+
+
+```{r}
+
+ggplot(data = housing_clean) +
+  geom_boxplot(aes(x = view_f, y=price_10000)) +
+  labs(title = "View Score versus Price in $10,000s") +
+  xlab("View Score") +
+  ylab("Price in the $10,000s")
+
+```
+```{r}
+ggplot(data = housing_clean) +
+  geom_boxplot(aes(x = waterfront_f, y=price_10000)) +
+  labs(title = "Waterfront Status versus Price in $10,000s") +
+  xlab("Waterfront Status") +
+  ylab("Price in the $10,000s")
+
+```
+
+```{r}
+
+ggplot(data = housing_clean) +
+  geom_boxplot(aes(x = condition_f, y=price_10000)) +
+  labs(title = "House Condition versus Price in $10,000s") +
+  xlab("House Condition") +
+  ylab("Price in the $10,000s")
+
+
+```
+
+```{r}
+
+ggplot(data = housing_clean) +
+  geom_boxplot(aes(x = grade_f, y=price_10000)) +
+  labs(title = "House Grade versus Price in $10,000s") +
+  xlab("House Grade") +
+  ylab("Price in the $10,000s")
+
+```
+
+
+```{r, Price by zipcode}
+housing_clean %>%
+  group_by(zipcode) %>%
+  summarise(mean = mean(price)) %>%
+  ggplot() +
+  geom_histogram((aes(x = mean))) +
+  labs(title = "Mean Price by Zipcode")
+
+```
+# 2.3 Diagnose for correlations between variables and determine independent and dependent variables
+
+```{r}
+# Correlation Analysis
+correlation_matrix <- cor(housing_clean[, c("price", "bedrooms", 
+                                            "bathrooms", "sqft_living", 
+                                            "sqft_lot")])
+print(head(correlation_matrix, 1))
+```
+
+These correlations shows that **"sqft_living" and "bathrooms"** have the strongest influence on the price, while the number of **"bedrooms"** has a weaker correlation. The **"sqft_lot"** has no correlation.
+
+Therefore, the dependent variable will be **"price"**, and the predictors will be **"bedrooms", "bathrooms", and "sqft_living"**.
+
+
+```{r}
+
+# Linear Regression
+lm_model <- lm(price ~ bedrooms + bathrooms + sqft_living + sqft_lot,
+               data = housing_clean)
+summary(lm_model)
+
+
+```
+
+* **Formula:** price = (5.149e+04) + (-5.299e+04 x bedrooms) + (1.459e+04 x bathrooms) + (3.091e+02 x sqft_living)
+
+
+```{r}
+ggplot(data = housing_clean, aes(x=sqft_living, y=price)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+```{r}
+ggplot(data = housing_clean, aes(x=bedrooms, y=price)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+```{r}
+ggplot(data = housing_clean, aes(x=bathrooms, y=price)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+```
+
+# 3. Data Analytics
+
+## 3.1 Determine the need for a supervised or unsupervised learning method and identify dependent and independent variables
+
+Based on our research of predicting **"price"** through **"bedrooms", "bathrooms", and "sqft_living"** as independent variables, we will need a supervised learning method. 
+
+The target variable is **"price"**, and the predictors are **"bedrooms", "bathrooms", and "sqft_living"**.
+
+* **Formula:** price = (5.149e+04) + (-5.299e+04 x bedrooms) + (1.459e+04 x bathrooms) + (3.091e+02 x sqft_living)
+
+## 3.2 Train, test, and provide accuracy and evaluation metrics for model results
+
+```{r}
+set.seed(123456)
+housing_split <- initial_split(housing_clean, prop=0.5)
+housing_train <- training(housing_split)
+housing_test <- testing(housing_split)
+```
+
+
+Building Linear Regression models with training data- PREDICTING PRICE
+
+```{r}
+model0<- lm(price ~ 1, data = housing_train)
+summary(model0)
+```
+
+```{r}
+model0_all<- lm(price ~ ., data = housing_train)
+#summary(model0_all)
+```
+
+```{r}
+model1<- lm(price ~ sqft_living, data = housing_train)
+summary(model1)
+```
+
+```{r}
+model2<- lm(price ~ sqft_living + bedrooms + bathrooms, data = housing_train)
+summary(model2)
+```
+
+```{r}
+model3<- lm(price ~ sqft_living + grade, data = housing_train)
+summary(model3)
+```
+
+```{r}
+model4<- lm(price ~ condition + waterfront + view + grade, data = housing_train)
+summary(model4)
+```
+
+```{r}
+model5<- lm(price ~ condition + waterfront + view + grade + sqft_living + 
+              bedrooms, data = housing_train)
+summary(model5)
+```
+
+```{r}
+model6<- lm(price ~ date + floors + condition + waterfront + view + grade + 
+              sqft_living + sqft_lot + bedrooms + bathrooms + yr_built + 
+              sqft_above + sqft_basement, data = housing_train)
+summary(model6)
+
+```
+
+With a Multiple $R^2$ of 0.6483, that means that 64.83% of the variability in this dataset is explained by this model (model6).
+
+Model 6: Top 5 Variables with highest absolute value of t-value
+  1. Grade: 38.776
+  2. yr_built: -36.758
+  3. waterfront: 26.013
+  4. view: 13.388
+  5. bedrooms:-12.779
+
+
+Model 6 with transformed price, sqft_living, sqft_lot, sqft_above, and sqft_basement. This does NOT change any of the p-values, but it does make interpretation different.
+
+Each increase in one unit of price_10000 = an increase of $10,000
+Each increase in one unit of sqft_blank100 = an increase of 100 sqft
+
+```{r}
+model6_trans<- lm(price_10000 ~ date + floors + condition + waterfront + view + 
+                    grade + sqft_living100 + sqft_lot100 + bedrooms + bathrooms
+                  + yr_built + sqft_above100 + sqft_basement100, 
+                  data = housing_train)
+summary(model6_trans)
+
+```
+
+What if we try to account for interactions?
+
+```{r}
+model7<- lm(price_10000 ~ date + floors + condition + waterfront + view + 
+              grade + sqft_living100 + sqft_lot100 + bedrooms + bathrooms + 
+              yr_built + sqft_above100 + sqft_basement100 + bedrooms:bathrooms 
+            + sqft_living100:sqft_lot100, data = housing_train)
+summary(model7)
+```
+
+Adding interactions between bedrooms and bathrooms, along with sqft_living100 and sqft_lot100 has rendered sqft_lot100 not significant. It has increased the t-value of grade by 2.
+
+The $R^2$ value is 0.6557, which means that 65.57% of the variability in this dataset can be explained by this model.
+
+```{r}
+model7a<- lm(price_10000 ~ date + floors + condition + waterfront + view 
+             + grade + sqft_living100 + bedrooms + bathrooms + yr_built + 
+               sqft_above100 + sqft_basement100 + bedrooms:bathrooms + 
+               sqft_living100:sqft_lot100, data = housing_train)
+summary(model7a)
+```
+
+Removing the insignificant term does not change the R-Squared.
+
+What if we removed the variables that are included in the interactions, and kept only the interactions?
+
+```{r}
+model8<- lm(price_10000 ~ date + floors + condition + waterfront + view + 
+              grade + yr_built + sqft_above100 + sqft_basement100 + 
+              bedrooms:bathrooms + sqft_living100:sqft_lot100, 
+            data = housing_train)
+summary(model8)
+```
+
+Doing this renders the bedrooms and bathrooms interaction insignificant. We would suggest that we keep separate bedrooms and bathrooms terms.
+
+What if we kept the separate bedrooms and bathrooms terms, plus their interaction, but removed the interaction for sqft_living100 and sqft_lot100?
+
+```{r}
+model9<- lm(price_10000 ~ date + bedrooms + bathrooms + floors + condition 
+            + waterfront + view + grade + yr_built + sqft_above100 + 
+              sqft_basement100 + sqft_living100 + sqft_lot100 + 
+              bedrooms:bathrooms , data = housing_train)
+summary(model9)
+```
+
+Doing so gives us an $R^2$ value of 0.6544, which means that 65.44% of the variability in the dataset can be explained by this model (model9)
+
+
+
+# A summary of the models created so far
+
+Model                     $R^2$               
+-------------------       --------------------   
+model0                    NA                                             
+model1                    0.481                 
+model2                    0.4936                 
+model3                    0.518                 
+model4                    0.5258                 
+model5                    0.5968                 
+model6                    0.6483                 
+model7                    0.6557
+model7a                   0.6557
+model8                    0.6421
+model9                    0.6554
+
+From these models, we will move forward with model7a, as it has the highest $R^2$ value, and less predictor variables than model7.
+
+# Applying the model to the data
+We are going to take the model7a and apply it to the testing data using the function "augment". This will add some columns to the housing_test tibble, which provides the estimates based on model7a.
+
+```{r}
+fit_7a<- model7a %>%
+  augment(housing_test)
+
+fit_7a %>%
+  rmse(price_10000, .fitted) %>%
+     pull(.estimate)
+
+fit_9<- model9 %>%
+  augment(housing_test)
+
+fit_9 %>%
+  rmse(price_10000, .fitted) %>%
+     pull(.estimate)
+```
