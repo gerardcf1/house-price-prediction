@@ -51,5 +51,4 @@ This project applies data science techniques to analyze housing sales data and b
 ## Contributors
 - **Gerard Corrales**
 
-## License
-This project is licensed under the MIT License - see the LICENSE file for details.
+
